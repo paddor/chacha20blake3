@@ -264,6 +264,13 @@ describe ChaCha20Blake3::Cipher do
   end
 
   describe "input validation" do
+    it "freezes the key on construction" do
+      key = ChaCha20Blake3.generate_key.dup
+      refute_predicate key, :frozen?
+      ChaCha20Blake3::Cipher.new(key)
+      assert_predicate key, :frozen?
+    end
+
     it "raises ArgumentError when key is too short" do
       assert_raises(ArgumentError) { ChaCha20Blake3::Cipher.new("\x00" * 31) }
     end
@@ -308,6 +315,16 @@ describe ChaCha20Blake3::Stream do
     it "returns a Stream" do
       assert_instance_of ChaCha20Blake3::Stream,
                          ChaCha20Blake3::Stream.new(@key, @nonce)
+    end
+
+    it "freezes key and nonce on construction" do
+      key   = ChaCha20Blake3.generate_key.dup
+      nonce = ChaCha20Blake3.generate_nonce.dup
+      refute_predicate key, :frozen?
+      refute_predicate nonce, :frozen?
+      ChaCha20Blake3::Stream.new(key, nonce)
+      assert_predicate key, :frozen?
+      assert_predicate nonce, :frozen?
     end
 
     it "raises ArgumentError when key is too short" do

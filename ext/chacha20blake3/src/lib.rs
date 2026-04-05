@@ -84,6 +84,7 @@ fn validate_tag(ruby: &Ruby, tag: &[u8]) -> Result<[u8; TAG_SIZE], Error> {
 fn cipher_initialize(ruby: &Ruby, rb_key: RString) -> Result<Cipher, Error> {
     // SAFETY: key bytes are copied into a fixed array before any GC can run.
     let key_arr = unsafe { validate_key(ruby, rb_key.as_slice())? };
+    rb_key.freeze();
     Ok(Cipher(chacha20_blake3::ChaCha20Blake3::new(key_arr)))
 }
 
@@ -226,6 +227,8 @@ fn stream_initialize(ruby: &Ruby, rb_key: RString, rb_nonce: RString) -> Result<
         (validate_key(ruby, rb_key.as_slice())?,
          validate_nonce(ruby, rb_nonce.as_slice())?)
     };
+    rb_key.freeze();
+    rb_nonce.freeze();
     Ok(Stream {
         cipher:       chacha20_blake3::ChaCha20Blake3::new(key_arr),
         nonce_prefix: nonce_arr[..16].try_into().unwrap(),
