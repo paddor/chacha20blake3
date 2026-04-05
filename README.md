@@ -1,5 +1,9 @@
 # ChaCha20Blake3
 
+[![CI](https://github.com/paddor/chacha20blake3/actions/workflows/ci.yml/badge.svg)](https://github.com/paddor/chacha20blake3/actions/workflows/ci.yml)
+[![Gem Version](https://img.shields.io/gem/v/chacha20blake3?color=e9573f)](https://rubygems.org/gems/chacha20blake3)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 > **Warning:** This gem is not maintained by cryptographers. The author is not a
 > cryptographer. It has not been independently audited. For production use where
 > proven, audited libraries matter, consider [RbNaCl](https://github.com/RubyCrypto/rbnacl)
@@ -186,21 +190,36 @@ The 32-byte (256-bit) tag provides 128-bit security against forgery (birthday bo
 
 ## Performance
 
-Benchmarked on AMD EPYC 9R45 (upstream crate figures):
+This gem peaks at ~1.27 GB/s encrypt on a 2019 MacBook Pro (i7-9750H, Linux
+VM, AVX2). The upstream Rust crate achieves 3+ GB/s on modern hardware (AMD
+EPYC 9R45) without the Ruby FFI overhead.
 
-| Payload | ChaCha20-BLAKE3 | XChaCha20-Poly1305 | AES-256-GCM |
-|---------|-----------------|-------------------|-------------|
-| 64 B    | 103 MB/s        | 116 MB/s          | 540 MB/s    |
-| 1 MB    | 3,297 MB/s      | 1,654 MB/s        | 1,476 MB/s  |
-| 10 MB   | 3,353 MB/s      | 1,664 MB/s        | 1,477 MB/s  |
+Compared to ChaCha20-Poly1305 and AES-256-GCM via Ruby's OpenSSL bindings
+(same machine):
 
-ChaCha20-BLAKE3 dominates at larger payload sizes due to BLAKE3's tree-hashing parallelism. AES-256-GCM is faster on small messages on CPUs with AES-NI - but falls behind without it.
+```
+Size         CC20-B3 enc  CC20-P1305 enc     AES-GCM enc
+---------------------------------------------------------
+64 B           62.5 MB/s       25.8 MB/s       29.5 MB/s
+1 KB          392.1 MB/s      295.5 MB/s      323.1 MB/s
+64 KB          1.15 GB/s       1.40 GB/s       1.90 GB/s
+1 MB           1.20 GB/s       1.39 GB/s       1.97 GB/s
+```
+
+ChaCha20-BLAKE3 is ~2x faster on small messages (lower per-call overhead).
+AES-256-GCM pulls ahead on large messages on CPUs with AES-NI. On CPUs
+without AES-NI, ChaCha20-BLAKE3 wins across the board. The tradeoff for
+slightly lower bulk throughput is a 256-bit authentication tag (128-bit
+forgery security) vs 128-bit tags in Poly1305 and GCM (64-bit forgery
+security).
+
+See [benchmarks/README.md](benchmarks/README.md) for the full 64 B - 64 MiB
+results.
 
 ### Ruby binding overhead
 
-The upstream Rust crate achieves 3+ GB/s on large payloads (AMD EPYC 9R45).
-The Ruby bindings peak at ~1.2 GB/s on a 2019 MacBook Pro (i7-9750H, Linux VM,
-AVX2) due to unavoidable data copies across the FFI boundary:
+The Ruby bindings use 2 memory copies per operation (down from 3 in a naive
+implementation) due to unavoidable data copies across the FFI boundary:
 
 1. **Ruby string -> Rust Vec** - Ruby's GC can relocate string buffers at any
    time, so the plaintext must be copied into Rust-owned memory before
@@ -212,9 +231,8 @@ AVX2) due to unavoidable data copies across the FFI boundary:
    verification on decrypt), the output Ruby string is allocated at the exact
    final size (`str_buf_new`), then filled with a single `cat()` call.
 
-Net result: 2 memory copies per operation (down from 3 in a naive
-implementation). The remaining bottleneck at large sizes (>2 MiB) is L3 cache
-eviction, not the FFI overhead.
+The remaining bottleneck at large sizes (>2 MiB) is L3 cache eviction, not
+the FFI overhead.
 
 Run the included benchmarks:
 
