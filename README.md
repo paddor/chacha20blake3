@@ -201,24 +201,26 @@ Encrypt:
 ```
 Size         CC20-B3      CC20-P1305      AES-GCM
 ---------------------------------------------------
-64 B           61.1 MB/s     25.7 MB/s     28.0 MB/s
-256 B         198.6 MB/s    102.2 MB/s     98.1 MB/s
-1 KB          402.4 MB/s    292.9 MB/s    319.7 MB/s
-4 KB          654.1 MB/s    700.1 MB/s    792.7 MB/s
-256 KB         1.05 GB/s     1.49 GB/s     2.00 GB/s
-1 MB           1.11 GB/s     1.26 GB/s     1.61 GB/s
+64 B           62.0 MB/s     26.2 MB/s     27.8 MB/s
+256 B         192.5 MB/s    101.0 MB/s    114.2 MB/s
+1 KB          394.1 MB/s    287.0 MB/s    320.2 MB/s
+4 KB          639.7 MB/s    713.1 MB/s    797.5 MB/s
+64 KB          1.17 GB/s     1.30 GB/s     1.92 GB/s
+256 KB         1.22 GB/s     1.37 GB/s     1.95 GB/s
+1 MB           1.18 GB/s     1.42 GB/s     2.06 GB/s
 ```
 
 Decrypt:
 ```
 Size         CC20-B3      CC20-P1305      AES-GCM
 ---------------------------------------------------
-64 B           58.6 MB/s     28.8 MB/s     29.4 MB/s
-256 B         196.8 MB/s    113.0 MB/s    121.1 MB/s
-1 KB          405.4 MB/s    298.5 MB/s    333.2 MB/s
-4 KB          628.2 MB/s    720.8 MB/s    868.2 MB/s
-256 KB         1.17 GB/s     1.45 GB/s     2.09 GB/s
-1 MB           1.04 GB/s     1.20 GB/s     1.66 GB/s
+64 B           62.3 MB/s     28.2 MB/s     30.0 MB/s
+256 B         191.2 MB/s    108.9 MB/s    119.2 MB/s
+1 KB          394.3 MB/s    301.3 MB/s    324.7 MB/s
+4 KB          648.4 MB/s    716.6 MB/s    876.0 MB/s
+64 KB          1.16 GB/s     1.27 GB/s     1.88 GB/s
+256 KB         1.19 GB/s     1.35 GB/s     2.00 GB/s
+1 MB           1.22 GB/s     1.36 GB/s     2.06 GB/s
 ```
 
 ChaCha20-BLAKE3 is ~2x faster on small messages (lower per-call overhead).
