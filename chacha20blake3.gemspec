@@ -5,8 +5,8 @@ require_relative "lib/chacha20blake3/version"
 Gem::Specification.new do |spec|
   spec.name          = "chacha20blake3"
   spec.version       = ChaCha20Blake3::VERSION
-  spec.authors       = [""]
-  spec.email         = [""]
+  spec.authors       = ["Patrik Wenger"]
+  spec.email         = ["paddor@protonmail.ch"]
 
   spec.summary       = "Fast DJB-family authenticated encryption: ChaCha20 + BLAKE3 MAC"
   spec.description   = <<~DESC
