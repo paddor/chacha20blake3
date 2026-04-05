@@ -197,15 +197,28 @@ EPYC 9R45) without the Ruby FFI overhead.
 Compared to ChaCha20-Poly1305 and AES-256-GCM via Ruby's OpenSSL bindings
 (same machine):
 
+Encrypt:
 ```
-Size         CC20-B3 enc  CC20-P1305 enc     AES-GCM enc
----------------------------------------------------------
-64 B           61.1 MB/s       25.7 MB/s       28.0 MB/s
-256 B         198.6 MB/s      102.2 MB/s       98.1 MB/s
-1 KB          402.4 MB/s      292.9 MB/s      319.7 MB/s
-4 KB          654.1 MB/s      700.1 MB/s      792.7 MB/s
-256 KB         1.05 GB/s       1.49 GB/s       2.00 GB/s
-1 MB           1.11 GB/s       1.26 GB/s       1.61 GB/s
+Size         CC20-B3      CC20-P1305      AES-GCM
+---------------------------------------------------
+64 B           61.1 MB/s     25.7 MB/s     28.0 MB/s
+256 B         198.6 MB/s    102.2 MB/s     98.1 MB/s
+1 KB          402.4 MB/s    292.9 MB/s    319.7 MB/s
+4 KB          654.1 MB/s    700.1 MB/s    792.7 MB/s
+256 KB         1.05 GB/s     1.49 GB/s     2.00 GB/s
+1 MB           1.11 GB/s     1.26 GB/s     1.61 GB/s
+```
+
+Decrypt:
+```
+Size         CC20-B3      CC20-P1305      AES-GCM
+---------------------------------------------------
+64 B           58.6 MB/s     28.8 MB/s     29.4 MB/s
+256 B         196.8 MB/s    113.0 MB/s    121.1 MB/s
+1 KB          405.4 MB/s    298.5 MB/s    333.2 MB/s
+4 KB          628.2 MB/s    720.8 MB/s    868.2 MB/s
+256 KB         1.17 GB/s     1.45 GB/s     2.09 GB/s
+1 MB           1.04 GB/s     1.20 GB/s     1.66 GB/s
 ```
 
 ChaCha20-BLAKE3 is ~2x faster on small messages (lower per-call overhead).
