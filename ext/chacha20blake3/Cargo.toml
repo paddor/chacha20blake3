@@ -1,0 +1,17 @@
+[package]
+name    = "chacha20blake3"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name       = "chacha20blake3"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+chacha20-blake3 = { git = "https://github.com/skerkour/chacha20-blake3", rev = "9942bf34c77b03896bb1733079256076ca823e58" }
+blake3          = { version = "1", features = ["std"] }
+magnus          = "0.8"
+getrandom       = "0.2"
+
+[build-dependencies]
+rb-sys = "0.9"

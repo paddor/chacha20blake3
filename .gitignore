@@ -1,0 +1,12 @@
+/CLA*
+/.cla*/
+/plans/
+/Gemfile.lock
+/pkg/
+/coverage/
+/target/
+/lib/**/*.so
+/tmp/
+*.gem
+/TODO
+/bench/results.jsonl
