@@ -31,6 +31,10 @@ describe ChaCha20Blake3 do
     it "returns BINARY encoding" do
       assert_equal Encoding::BINARY, ChaCha20Blake3.generate_key.encoding
     end
+
+    it "returns a frozen string" do
+      assert_predicate ChaCha20Blake3.generate_key, :frozen?
+    end
   end
 
   describe ".generate_nonce" do
@@ -41,6 +45,10 @@ describe ChaCha20Blake3 do
     it "returns random bytes each time" do
       refute_equal ChaCha20Blake3.generate_nonce, ChaCha20Blake3.generate_nonce
     end
+
+    it "returns a frozen string" do
+      assert_predicate ChaCha20Blake3.generate_nonce, :frozen?
+    end
   end
 
   describe ".generate_key_and_nonce" do
@@ -48,6 +56,12 @@ describe ChaCha20Blake3 do
       key, nonce = ChaCha20Blake3.generate_key_and_nonce
       assert_equal 32, key.bytesize
       assert_equal 24, nonce.bytesize
+    end
+
+    it "returns frozen strings" do
+      key, nonce = ChaCha20Blake3.generate_key_and_nonce
+      assert_predicate key, :frozen?
+      assert_predicate nonce, :frozen?
     end
   end
 
@@ -79,6 +93,15 @@ describe ChaCha20Blake3::Cipher do
     it "returns BINARY encoding from decrypt" do
       ct = @cipher.encrypt(@nonce, "test")
       assert_equal Encoding::BINARY, @cipher.decrypt(@nonce, ct).encoding
+    end
+
+    it "returns mutable ciphertext from encrypt" do
+      refute_predicate @cipher.encrypt(@nonce, "test"), :frozen?
+    end
+
+    it "returns mutable plaintext from decrypt" do
+      ct = @cipher.encrypt(@nonce, "test")
+      refute_predicate @cipher.decrypt(@nonce, ct), :frozen?
     end
 
     it "produces ciphertext of plaintext_len + TAG_SIZE" do
@@ -215,6 +238,14 @@ describe ChaCha20Blake3::Cipher do
       assert_equal "payload".b, @cipher.decrypt_detached(@nonce, ct, tag, aad: "context")
     end
 
+    it "returns mutable ciphertext, tag, and plaintext" do
+      ct, tag = @cipher.encrypt_detached(@nonce, "payload")
+      pt = @cipher.decrypt_detached(@nonce, ct, tag)
+      refute_predicate ct, :frozen?
+      refute_predicate tag, :frozen?
+      refute_predicate pt, :frozen?
+    end
+
     it "raises DecryptionError on wrong tag" do
       ct, tag = @cipher.encrypt_detached(@nonce, "payload")
       bad_tag = tag.dup
@@ -348,6 +379,15 @@ describe ChaCha20Blake3::Stream do
     it "returns BINARY encoding" do
       s = ChaCha20Blake3::Stream.new(@key, @nonce)
       assert_equal Encoding::BINARY, s.encrypt("test").encoding
+    end
+
+    it "returns mutable ciphertext and plaintext" do
+      enc = ChaCha20Blake3::Stream.new(@key, @nonce)
+      dec = ChaCha20Blake3::Stream.new(@key, @nonce)
+      ct = enc.encrypt("test")
+      pt = dec.decrypt(ct)
+      refute_predicate ct, :frozen?
+      refute_predicate pt, :frozen?
     end
 
     it "produces ciphertext of plaintext_len + TAG_SIZE" do

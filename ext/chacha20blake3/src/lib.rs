@@ -315,7 +315,9 @@ fn generate_key(ruby: &Ruby) -> Result<RString, Error> {
             format!("RNG failure: {e}"),
         )
     })?;
-    Ok(ruby.str_from_slice(&key))
+    let s = ruby.str_from_slice(&key);
+    s.freeze();
+    Ok(s)
 }
 
 fn generate_nonce(ruby: &Ruby) -> Result<RString, Error> {
@@ -326,7 +328,9 @@ fn generate_nonce(ruby: &Ruby) -> Result<RString, Error> {
             format!("RNG failure: {e}"),
         )
     })?;
-    Ok(ruby.str_from_slice(&nonce))
+    let s = ruby.str_from_slice(&nonce);
+    s.freeze();
+    Ok(s)
 }
 
 #[magnus::init]
