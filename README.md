@@ -200,10 +200,12 @@ Compared to ChaCha20-Poly1305 and AES-256-GCM via Ruby's OpenSSL bindings
 ```
 Size         CC20-B3 enc  CC20-P1305 enc     AES-GCM enc
 ---------------------------------------------------------
-64 B           62.5 MB/s       25.8 MB/s       29.5 MB/s
-1 KB          392.1 MB/s      295.5 MB/s      323.1 MB/s
-64 KB          1.15 GB/s       1.40 GB/s       1.90 GB/s
-1 MB           1.20 GB/s       1.39 GB/s       1.97 GB/s
+64 B           61.1 MB/s       25.7 MB/s       28.0 MB/s
+256 B         198.6 MB/s      102.2 MB/s       98.1 MB/s
+1 KB          402.4 MB/s      292.9 MB/s      319.7 MB/s
+4 KB          654.1 MB/s      700.1 MB/s      792.7 MB/s
+256 KB         1.05 GB/s       1.49 GB/s       2.00 GB/s
+1 MB           1.11 GB/s       1.26 GB/s       1.61 GB/s
 ```
 
 ChaCha20-BLAKE3 is ~2x faster on small messages (lower per-call overhead).

@@ -6,10 +6,12 @@ require "chacha20blake3"
 require "openssl"
 
 SIZES = {
-  "64 B"  =>         64,
-  "1 KB"  =>      1_024,
-  "64 KB" =>     65_536,
-  "1 MB"  =>  1_048_576,
+  "64 B"   =>         64,
+  "256 B"  =>        256,
+  "1 KB"   =>      1_024,
+  "4 KB"   =>      4_096,
+  "256 KB" =>    262_144,
+  "1 MB"   =>  1_048_576,
 }.freeze
 
 MIN_SECONDS = 1.0
