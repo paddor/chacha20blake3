@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0 — 2026-04-07
+
+### Added
+
+- `ChaCha20Blake3.derive_key(context, material, length:)` — BLAKE3 KDF with
+  configurable output length (default 32, max 65535).
+
 ## 0.1.0
 
 Initial release.

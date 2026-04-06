@@ -310,6 +310,39 @@ fn stream_message_index(rb_self: &Stream) -> u64 {
     *rb_self.counter.lock().unwrap()
 }
 
+fn blake3_derive_key(ruby: &Ruby, args: &[Value]) -> Result<RString, Error> {
+    let parsed = scan_args::<(RString, RString), (), (), (), RHash, ()>(args)?;
+    let (rb_context, rb_material) = parsed.required;
+    let kw = get_kwargs::<_, (), (Option<usize>,), ()>(parsed.keywords, &[], &["length"])?;
+    let (opt_length,) = kw.optional;
+    let length = opt_length.unwrap_or(32);
+
+    if length == 0 || length > 65535 {
+        return Err(Error::new(
+            ruby.exception_arg_error(),
+            format!("length must be 1..65535, got {length}"),
+        ));
+    }
+
+    // SAFETY: copy context string before any allocation
+    let context = unsafe { std::str::from_utf8(rb_context.as_slice()) }
+        .map_err(|_| Error::new(ruby.exception_arg_error(), "context must be valid UTF-8"))?
+        .to_owned();
+
+    let mut output_buf = vec![0u8; length];
+    unsafe {
+        let mut deriver = blake3::Hasher::new_derive_key(&context);
+        deriver.update(rb_material.as_slice());
+        let mut reader = deriver.finalize_xof();
+        reader.fill(&mut output_buf);
+    }
+
+    let output = ruby.str_from_slice(&output_buf);
+    output.freeze();
+    Ok(output)
+}
+
+
 fn generate_key(ruby: &Ruby) -> Result<RString, Error> {
     let mut key = [0u8; KEY_SIZE];
     getrandom::getrandom(&mut key).map_err(|e| {
@@ -365,6 +398,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
 
     module.define_module_function("generate_key", function!(generate_key, 0))?;
     module.define_module_function("generate_nonce", function!(generate_nonce, 0))?;
+    module.define_module_function("derive_key", function!(blake3_derive_key, -1))?;
 
     Ok(())
 }
