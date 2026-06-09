@@ -8,7 +8,7 @@ name       = "chacha20blake3"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-chacha20-blake3 = { git = "https://github.com/skerkour/chacha20-blake3", rev = "9942bf34c77b03896bb1733079256076ca823e58" }
+chacha20-blake3 = "0.10.0"
 blake3          = { version = "1", features = ["std"] }
 magnus          = "0.8"
 getrandom       = "0.2"

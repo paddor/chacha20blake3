@@ -60,7 +60,7 @@ dependencies = [
  "arrayvec",
  "cc",
  "cfg-if",
- "constant_time_eq",
+ "constant_time_eq 0.4.2",
  "cpufeatures",
  "zeroize",
 ]
@@ -91,21 +91,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
-name = "chacha"
-version = "0.1.0"
-source = "git+https://github.com/skerkour/chacha20-blake3?rev=9942bf34c77b03896bb1733079256076ca823e58#9942bf34c77b03896bb1733079256076ca823e58"
-dependencies = [
- "zeroize",
-]
-
-[[package]]
 name = "chacha20-blake3"
-version = "0.9.11"
-source = "git+https://github.com/skerkour/chacha20-blake3?rev=9942bf34c77b03896bb1733079256076ca823e58#9942bf34c77b03896bb1733079256076ca823e58"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "55d7729707a8889ea911e9c775c5af9eba82e98ed1588e18b0ec7ae3a51c71bd"
 dependencies = [
  "blake3",
- "chacha",
- "constant_time_eq",
+ "constant_time_eq 0.5.0",
  "zeroize",
 ]
 
@@ -136,6 +128,12 @@ name = "constant_time_eq"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
+
+[[package]]
+name = "constant_time_eq"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a1ec0cfec728a79a5109075543131387f911cb4d07716436d7ae20533657a96"
 
 [[package]]
 name = "cpufeatures"

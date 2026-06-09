@@ -13,9 +13,9 @@ use std::sync::{Mutex, OnceLock};
 
 const KEY_SIZE: usize = 32;
 const NONCE_SIZE: usize = 24;
+const SESSION_NONCE_SIZE: usize = 8;
 const TAG_SIZE: usize = 32;
 
-// Opaque<T> is Send+Sync and is designed for storing Ruby values in statics.
 static DECRYPTION_ERROR: OnceLock<Opaque<ExceptionClass>> = OnceLock::new();
 
 fn decryption_error(ruby: &Ruby) -> ExceptionClass {
@@ -29,27 +29,14 @@ struct Cipher(chacha20_blake3::ChaCha20Blake3);
 unsafe impl Send for Cipher {}
 unsafe impl Sync for Cipher {}
 
-// No #reset or #rewind method by design: allowing the counter to go backwards
-// would silently reuse (key, nonce) pairs, which is catastrophic for a stream cipher.
-#[magnus::wrap(class = "ChaCha20Blake3::Stream", free_immediately, size)]
-struct Stream {
-    cipher:       chacha20_blake3::ChaCha20Blake3,
-    nonce_prefix: [u8; 16],
-    counter_base: u64,
-    counter:      Mutex<u64>,
+#[magnus::wrap(class = "ChaCha20Blake3::Session", free_immediately, size)]
+struct Session {
+    inner: Mutex<chacha20_blake3::Session20>,
 }
 
-// Safety: all fields are Send. The Mutex<u64> provides interior mutability with
-// synchronization, making Stream both Send and Sync (safe for Ractors).
-unsafe impl Send for Stream {}
-unsafe impl Sync for Stream {}
-
-fn nonce_for_counter(s: &Stream, counter: u64) -> [u8; 24] {
-    let mut nonce = [0u8; 24];
-    nonce[..16].copy_from_slice(&s.nonce_prefix);
-    nonce[16..].copy_from_slice(&s.counter_base.wrapping_add(counter).to_le_bytes());
-    nonce
-}
+// Safety: Mutex<Session20> provides Send+Sync via interior synchronization.
+unsafe impl Send for Session {}
+unsafe impl Sync for Session {}
 
 fn validate_key(ruby: &Ruby, key: &[u8]) -> Result<[u8; KEY_SIZE], Error> {
     if key.len() != KEY_SIZE {
@@ -66,6 +53,19 @@ fn validate_nonce(ruby: &Ruby, nonce: &[u8]) -> Result<[u8; NONCE_SIZE], Error> 
         return Err(Error::new(
             ruby.exception_arg_error(),
             format!("nonce must be exactly {NONCE_SIZE} bytes, got {}", nonce.len()),
+        ));
+    }
+    Ok(nonce.try_into().unwrap())
+}
+
+fn validate_session_nonce(ruby: &Ruby, nonce: &[u8]) -> Result<[u8; SESSION_NONCE_SIZE], Error> {
+    if nonce.len() != SESSION_NONCE_SIZE {
+        return Err(Error::new(
+            ruby.exception_arg_error(),
+            format!(
+                "session nonce must be exactly {SESSION_NONCE_SIZE} bytes, got {}",
+                nonce.len()
+            ),
         ));
     }
     Ok(nonce.try_into().unwrap())
@@ -222,46 +222,41 @@ fn cipher_decrypt_detached(
     Ok(output)
 }
 
-fn stream_initialize(ruby: &Ruby, rb_key: RString, rb_nonce: RString) -> Result<Stream, Error> {
-    let (key_arr, nonce_arr) = unsafe {
-        (validate_key(ruby, rb_key.as_slice())?,
-         validate_nonce(ruby, rb_nonce.as_slice())?)
+fn session_initialize(
+    ruby: &Ruby,
+    rb_enc_key: RString,
+    rb_auth_key: RString,
+    rb_nonce: RString,
+) -> Result<Session, Error> {
+    let (enc_key, auth_key, nonce) = unsafe {
+        (
+            validate_key(ruby, rb_enc_key.as_slice())?,
+            validate_key(ruby, rb_auth_key.as_slice())?,
+            validate_session_nonce(ruby, rb_nonce.as_slice())?,
+        )
     };
-    rb_key.freeze();
+    rb_enc_key.freeze();
+    rb_auth_key.freeze();
     rb_nonce.freeze();
-    Ok(Stream {
-        cipher:       chacha20_blake3::ChaCha20Blake3::new(key_arr),
-        nonce_prefix: nonce_arr[..16].try_into().unwrap(),
-        counter_base: u64::from_le_bytes(nonce_arr[16..].try_into().unwrap()),
-        counter:      Mutex::new(0),
+    Ok(Session {
+        inner: Mutex::new(chacha20_blake3::Session20::new(enc_key, auth_key, nonce)),
     })
 }
 
-fn stream_encrypt(ruby: &Ruby, rb_self: &Stream, args: &[Value]) -> Result<RString, Error> {
+fn session_encrypt(ruby: &Ruby, rb_self: &Session, args: &[Value]) -> Result<RString, Error> {
     let parsed = scan_args::<(RString,), (), (), (), RHash, ()>(args)?;
     let (rb_plaintext,) = parsed.required;
     let kw = get_kwargs::<_, (), (Option<RString>,), ()>(parsed.keywords, &[], &["aad"])?;
     let (opt_aad,) = kw.optional;
 
-    // Hold the lock for the entire operation so no two threads can encrypt
-    // with the same nonce.
-    let mut counter = rb_self.counter.lock().unwrap();
+    let mut session = rb_self.inner.lock().unwrap();
 
     let (buf, tag) = unsafe {
-        let nonce = nonce_for_counter(rb_self, *counter);
         let mut buf = rb_plaintext.as_slice().to_vec();
         let aad = opt_aad.as_ref().map_or_else(Vec::new, |s| s.as_slice().to_vec());
-        let tag = rb_self.cipher.encrypt_in_place_detached(&nonce, &mut buf, &aad);
+        let tag = session.encrypt_in_place_detached(&mut buf, &aad);
         (buf, tag)
     };
-    // Advance counter. Overflow would reuse the initial nonce, which is
-    // catastrophic for a stream cipher.
-    *counter = counter.checked_add(1).ok_or_else(|| {
-        Error::new(
-            ruby.exception_runtime_error(),
-            "stream counter exhausted (2^64 messages); create a new Stream to continue",
-        )
-    })?;
 
     let output = ruby.str_buf_new(buf.len() + TAG_SIZE);
     output.cat(&buf);
@@ -269,18 +264,15 @@ fn stream_encrypt(ruby: &Ruby, rb_self: &Stream, args: &[Value]) -> Result<RStri
     Ok(output)
 }
 
-fn stream_decrypt(ruby: &Ruby, rb_self: &Stream, args: &[Value]) -> Result<RString, Error> {
+fn session_decrypt(ruby: &Ruby, rb_self: &Session, args: &[Value]) -> Result<RString, Error> {
     let parsed = scan_args::<(RString,), (), (), (), RHash, ()>(args)?;
     let (rb_ciphertext,) = parsed.required;
     let kw = get_kwargs::<_, (), (Option<RString>,), ()>(parsed.keywords, &[], &["aad"])?;
     let (opt_aad,) = kw.optional;
 
-    // Hold the lock for the entire operation so the counter only advances
-    // after successful authentication.
-    let mut counter = rb_self.counter.lock().unwrap();
+    let mut session = rb_self.inner.lock().unwrap();
 
     let buf = unsafe {
-        let nonce = nonce_for_counter(rb_self, *counter);
         let mut buf = rb_ciphertext.as_slice().to_vec();
         let aad = opt_aad.as_ref().map_or_else(Vec::new, |s| s.as_slice().to_vec());
         if buf.len() < TAG_SIZE {
@@ -289,25 +281,19 @@ fn stream_decrypt(ruby: &Ruby, rb_self: &Stream, args: &[Value]) -> Result<RStri
         let tag_start = buf.len() - TAG_SIZE;
         let tag: [u8; TAG_SIZE] = buf[tag_start..].try_into().unwrap();
         buf.truncate(tag_start);
-        rb_self.cipher.decrypt_in_place_detached(&nonce, &mut buf, &tag, &aad)
+        session
+            .decrypt_in_place_detached(&mut buf, &tag, &aad)
             .map_err(|_| Error::new(decryption_error(ruby), "decryption failed"))?;
         buf
     };
-    // Advance counter only after successful MAC verification.
-    *counter = counter.checked_add(1).ok_or_else(|| {
-        Error::new(
-            ruby.exception_runtime_error(),
-            "stream counter exhausted (2^64 messages); create a new Stream to continue",
-        )
-    })?;
 
     let output = ruby.str_buf_new(buf.len());
     output.cat(&buf);
     Ok(output)
 }
 
-fn stream_message_index(rb_self: &Stream) -> u64 {
-    *rb_self.counter.lock().unwrap()
+fn session_block_counter(rb_self: &Session) -> u64 {
+    rb_self.inner.lock().unwrap().block_counter()
 }
 
 fn blake3_derive_key(ruby: &Ruby, args: &[Value]) -> Result<RString, Error> {
@@ -375,6 +361,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
 
     module.const_set("KEY_SIZE", KEY_SIZE as u64)?;
     module.const_set("NONCE_SIZE", NONCE_SIZE as u64)?;
+    module.const_set("SESSION_NONCE_SIZE", SESSION_NONCE_SIZE as u64)?;
     module.const_set("TAG_SIZE", TAG_SIZE as u64)?;
 
     let decryption_error_class =
@@ -390,11 +377,11 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     cipher_class.define_method("encrypt_detached", method!(cipher_encrypt_detached, -1))?;
     cipher_class.define_method("decrypt_detached", method!(cipher_decrypt_detached, -1))?;
 
-    let stream_class = module.define_class("Stream", ruby.class_object())?;
-    stream_class.define_singleton_method("new", function!(stream_initialize, 2))?;
-    stream_class.define_method("encrypt",       method!(stream_encrypt, -1))?;
-    stream_class.define_method("decrypt",       method!(stream_decrypt, -1))?;
-    stream_class.define_method("message_index", method!(stream_message_index, 0))?;
+    let session_class = module.define_class("Session", ruby.class_object())?;
+    session_class.define_singleton_method("new", function!(session_initialize, 3))?;
+    session_class.define_method("encrypt",       method!(session_encrypt, -1))?;
+    session_class.define_method("decrypt",       method!(session_decrypt, -1))?;
+    session_class.define_method("block_counter", method!(session_block_counter, 0))?;
 
     module.define_module_function("generate_key", function!(generate_key, 0))?;
     module.define_module_function("generate_nonce", function!(generate_nonce, 0))?;
@@ -405,106 +392,108 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::{nonce_for_counter, Mutex, Stream};
-    use chacha20_blake3::ChaCha20Blake3;
-
-    fn make_stream(key: [u8; 32], nonce: [u8; 24]) -> Stream {
-        Stream {
-            cipher:       ChaCha20Blake3::new(key),
-            nonce_prefix: nonce[..16].try_into().unwrap(),
-            counter_base: u64::from_le_bytes(nonce[16..].try_into().unwrap()),
-            counter:      Mutex::new(0),
-        }
-    }
+    use chacha20_blake3::{ChaCha20Blake3, Session20};
 
     #[test]
-    fn stream_multi_message_roundtrip() {
-        let key   = [0x11u8; 32];
-        let nonce = [0x22u8; 24];
-        let enc = make_stream(key, nonce);
-        let dec = make_stream(key, nonce);
+    fn session_multi_message_roundtrip() {
+        let enc_key = [0x11u8; 32];
+        let auth_key = [0x22u8; 32];
+        let nonce = [0x33u8; 8];
+        let mut enc = Session20::new(enc_key, auth_key, nonce);
+        let mut dec = Session20::new(enc_key, auth_key, nonce);
 
         let messages: &[&[u8]] = &[b"alpha", b"beta", b"gamma"];
-        let ciphertexts: Vec<Vec<u8>> = messages.iter().map(|m| {
-            let mut counter = enc.counter.lock().unwrap();
-            let n  = nonce_for_counter(&enc, *counter);
-            let ct = enc.cipher.encrypt(&n, m, b"");
-            *counter += 1;
-            ct
-        }).collect();
+        let ciphertexts: Vec<Vec<u8>> = messages
+            .iter()
+            .map(|m| enc.encrypt(m, b""))
+            .collect();
 
         for (ct, expected) in ciphertexts.iter().zip(messages.iter()) {
-            let mut counter = dec.counter.lock().unwrap();
-            let n  = nonce_for_counter(&dec, *counter);
-            let pt = dec.cipher.decrypt(&n, ct, b"").expect("decrypt failed");
-            *counter += 1;
+            let pt = dec.decrypt(ct, b"").expect("decrypt failed");
             assert_eq!(pt.as_slice(), *expected);
         }
     }
 
     #[test]
-    fn stream_same_message_different_ciphertext() {
-        let key   = [0x33u8; 32];
-        let nonce = [0x44u8; 24];
-        let s = make_stream(key, nonce);
+    fn session_same_message_different_ciphertext() {
+        let enc_key = [0x44u8; 32];
+        let auth_key = [0x55u8; 32];
+        let nonce = [0x66u8; 8];
+        let mut session = Session20::new(enc_key, auth_key, nonce);
 
-        let mut counter = s.counter.lock().unwrap();
-        let n1 = nonce_for_counter(&s, *counter);
-        let ct1 = s.cipher.encrypt(&n1, b"repeat", b"");
-        *counter += 1;
-
-        let n2 = nonce_for_counter(&s, *counter);
-        let ct2 = s.cipher.encrypt(&n2, b"repeat", b"");
+        let ct1 = session.encrypt(b"repeat", b"");
+        let ct2 = session.encrypt(b"repeat", b"");
 
         assert_ne!(ct1, ct2);
     }
 
     #[test]
-    fn stream_nonce_suffix_wraps() {
-        // When counter_base is near u64::MAX, the nonce suffix (counter_base + counter)
-        // wraps around. This is fine - it's the counter *index* that must never wrap.
-        let key   = [0x55u8; 32];
-        let mut nonce = [0u8; 24];
-        nonce[16..].copy_from_slice(&u64::MAX.to_le_bytes());
+    fn session_block_counter_advances_by_blocks() {
+        let enc_key = [0x77u8; 32];
+        let auth_key = [0x88u8; 32];
+        let nonce = [0x99u8; 8];
+        let mut session = Session20::new(enc_key, auth_key, nonce);
 
-        let s = make_stream(key, nonce);
-        *s.counter.lock().unwrap() = 1; // counter_base(MAX) + 1 wraps nonce suffix to 0
+        assert_eq!(session.block_counter(), 0);
 
-        let n = nonce_for_counter(&s, *s.counter.lock().unwrap());
-        assert_eq!(&n[16..], &0u64.to_le_bytes());
+        // 100 bytes = ceil(100/64) = 2 blocks
+        session.encrypt(&[0u8; 100], b"");
+        assert_eq!(session.block_counter(), 2);
+
+        // 64 bytes = exactly 1 block
+        session.encrypt(&[0u8; 64], b"");
+        assert_eq!(session.block_counter(), 3);
+
+        // 0 bytes = 0 blocks
+        session.encrypt(b"", b"");
+        assert_eq!(session.block_counter(), 3);
     }
 
     #[test]
-    fn stream_failed_decrypt_does_not_advance_counter() {
-        let key   = [0x66u8; 32];
-        let nonce = [0x77u8; 24];
-        let enc = make_stream(key, nonce);
-        let dec = make_stream(key, nonce);
+    fn session_failed_decrypt_does_not_advance_counter() {
+        let enc_key = [0xAAu8; 32];
+        let auth_key = [0xBBu8; 32];
+        let nonce = [0xCCu8; 8];
+        let mut enc = Session20::new(enc_key, auth_key, nonce);
+        let mut dec = Session20::new(enc_key, auth_key, nonce);
 
-        // Encrypt a message
-        let mut enc_counter = enc.counter.lock().unwrap();
-        let n = nonce_for_counter(&enc, *enc_counter);
-        let ct = enc.cipher.encrypt(&n, b"hello", b"");
-        *enc_counter = enc_counter.wrapping_add(1);
-        drop(enc_counter);
+        let ct = enc.encrypt(b"hello", b"");
 
         // Tamper with ciphertext
         let mut tampered = ct.clone();
         tampered[0] ^= 0xFF;
 
-        // Decrypt should fail
-        let mut dec_counter = dec.counter.lock().unwrap();
-        let n = nonce_for_counter(&dec, *dec_counter);
-        let result = dec.cipher.decrypt(&n, &tampered, b"");
-        assert!(result.is_err());
-        // Counter must NOT have advanced
-        assert_eq!(*dec_counter, 0);
+        assert!(dec.decrypt(&tampered, b"").is_err());
+        assert_eq!(dec.block_counter(), 0);
 
-        // Original ciphertext should still decrypt at counter 0
-        let n = nonce_for_counter(&dec, *dec_counter);
-        let pt = dec.cipher.decrypt(&n, &ct, b"").expect("decrypt failed");
-        *dec_counter = dec_counter.wrapping_add(1);
+        // Original still decrypts
+        let pt = dec.decrypt(&ct, b"").expect("decrypt failed");
         assert_eq!(pt.as_slice(), b"hello");
+    }
+
+    #[test]
+    fn session_with_aad() {
+        let enc_key = [0xDDu8; 32];
+        let auth_key = [0xEEu8; 32];
+        let nonce = [0xFFu8; 8];
+        let mut enc = Session20::new(enc_key, auth_key, nonce);
+        let mut dec = Session20::new(enc_key, auth_key, nonce);
+
+        let ct = enc.encrypt(b"payload", b"header");
+        let pt = dec.decrypt(&ct, b"header").expect("decrypt with aad failed");
+        assert_eq!(pt.as_slice(), b"payload");
+    }
+
+    #[test]
+    fn session_wrong_aad_fails() {
+        let enc_key = [0x01u8; 32];
+        let auth_key = [0x02u8; 32];
+        let nonce = [0x03u8; 8];
+        let mut enc = Session20::new(enc_key, auth_key, nonce);
+        let mut dec = Session20::new(enc_key, auth_key, nonce);
+
+        let ct = enc.encrypt(b"payload", b"correct");
+        assert!(dec.decrypt(&ct, b"wrong").is_err());
     }
 
     #[test]

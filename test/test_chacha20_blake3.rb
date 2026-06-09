@@ -14,6 +14,10 @@ describe ChaCha20Blake3 do
       assert_equal 24, ChaCha20Blake3::NONCE_SIZE
     end
 
+    it "SESSION_NONCE_SIZE is 8" do
+      assert_equal 8, ChaCha20Blake3::SESSION_NONCE_SIZE
+    end
+
     it "TAG_SIZE is 32" do
       assert_equal 32, ChaCha20Blake3::TAG_SIZE
     end
@@ -305,88 +309,102 @@ describe ChaCha20Blake3::Cipher do
   end
 end
 
-describe ChaCha20Blake3::Stream do
+describe ChaCha20Blake3::Session do
   before do
-    @key   = ChaCha20Blake3.generate_key
-    @nonce = ChaCha20Blake3.generate_nonce
+    @enc_key  = ChaCha20Blake3.generate_key
+    @auth_key = ChaCha20Blake3.generate_key
+    @nonce    = ("\x42" * 8).b
+  end
+
+  def make_pair
+    enc = ChaCha20Blake3::Session.new(@enc_key, @auth_key, @nonce)
+    dec = ChaCha20Blake3::Session.new(@enc_key, @auth_key, @nonce)
+    [enc, dec]
   end
 
   describe ".new" do
-    it "returns a Stream" do
-      assert_instance_of ChaCha20Blake3::Stream,
-                         ChaCha20Blake3::Stream.new(@key, @nonce)
+    it "returns a Session" do
+      assert_instance_of ChaCha20Blake3::Session,
+                         ChaCha20Blake3::Session.new(@enc_key, @auth_key, @nonce)
     end
 
-    it "freezes key and nonce on construction" do
-      key   = ChaCha20Blake3.generate_key.dup
-      nonce = ChaCha20Blake3.generate_nonce.dup
-      refute_predicate key, :frozen?
-      refute_predicate nonce, :frozen?
-      ChaCha20Blake3::Stream.new(key, nonce)
-      assert_predicate key, :frozen?
-      assert_predicate nonce, :frozen?
+    it "freezes keys and nonce on construction" do
+      ek = ChaCha20Blake3.generate_key.dup
+      ak = ChaCha20Blake3.generate_key.dup
+      n  = ("\x00" * 8).dup
+      refute_predicate ek, :frozen?
+      refute_predicate ak, :frozen?
+      refute_predicate n, :frozen?
+      ChaCha20Blake3::Session.new(ek, ak, n)
+      assert_predicate ek, :frozen?
+      assert_predicate ak, :frozen?
+      assert_predicate n, :frozen?
     end
 
-    it "raises ArgumentError when key is too short" do
-      assert_raises(ArgumentError) { ChaCha20Blake3::Stream.new("\x00" * 31, @nonce) }
+    it "raises ArgumentError when enc_key is too short" do
+      assert_raises(ArgumentError) { ChaCha20Blake3::Session.new("\x00" * 31, @auth_key, @nonce) }
     end
 
-    it "raises ArgumentError when key is too long" do
-      assert_raises(ArgumentError) { ChaCha20Blake3::Stream.new("\x00" * 33, @nonce) }
+    it "raises ArgumentError when enc_key is too long" do
+      assert_raises(ArgumentError) { ChaCha20Blake3::Session.new("\x00" * 33, @auth_key, @nonce) }
+    end
+
+    it "raises ArgumentError when auth_key is too short" do
+      assert_raises(ArgumentError) { ChaCha20Blake3::Session.new(@enc_key, "\x00" * 31, @nonce) }
+    end
+
+    it "raises ArgumentError when auth_key is too long" do
+      assert_raises(ArgumentError) { ChaCha20Blake3::Session.new(@enc_key, "\x00" * 33, @nonce) }
     end
 
     it "raises ArgumentError when nonce is too short" do
-      assert_raises(ArgumentError) { ChaCha20Blake3::Stream.new(@key, "\x00" * 23) }
+      assert_raises(ArgumentError) { ChaCha20Blake3::Session.new(@enc_key, @auth_key, "\x00" * 7) }
     end
 
     it "raises ArgumentError when nonce is too long" do
-      assert_raises(ArgumentError) { ChaCha20Blake3::Stream.new(@key, "\x00" * 25) }
+      assert_raises(ArgumentError) { ChaCha20Blake3::Session.new(@enc_key, @auth_key, "\x00" * 9) }
     end
   end
 
-  describe "#message_index" do
+  describe "#block_counter" do
     it "starts at zero" do
-      s = ChaCha20Blake3::Stream.new(@key, @nonce)
-      assert_equal 0, s.message_index
+      s = ChaCha20Blake3::Session.new(@enc_key, @auth_key, @nonce)
+      assert_equal 0, s.block_counter
     end
 
-    it "increments on encrypt" do
-      s = ChaCha20Blake3::Stream.new(@key, @nonce)
-      s.encrypt("a")
-      assert_equal 1, s.message_index
-      s.encrypt("b")
-      assert_equal 2, s.message_index
+    it "advances by blocks on encrypt" do
+      s = ChaCha20Blake3::Session.new(@enc_key, @auth_key, @nonce)
+      s.encrypt("a")  # 1 byte -> ceil(1/64) = 1 block
+      assert_equal 1, s.block_counter
+      s.encrypt("b" * 100)  # 100 bytes -> ceil(100/64) = 2 blocks
+      assert_equal 3, s.block_counter
     end
 
-    it "increments on successful decrypt" do
-      enc = ChaCha20Blake3::Stream.new(@key, @nonce)
-      dec = ChaCha20Blake3::Stream.new(@key, @nonce)
-      ct = enc.encrypt("hello")
-      assert_equal 0, dec.message_index
+    it "advances on successful decrypt" do
+      enc, dec = make_pair
+      ct = enc.encrypt("hello")  # 5 bytes -> 1 block
+      assert_equal 0, dec.block_counter
       dec.decrypt(ct)
-      assert_equal 1, dec.message_index
+      assert_equal 1, dec.block_counter
     end
 
-    it "does not increment on failed decrypt" do
-      enc = ChaCha20Blake3::Stream.new(@key, @nonce)
-      dec = ChaCha20Blake3::Stream.new(@key, @nonce)
+    it "does not advance on failed decrypt" do
+      enc, dec = make_pair
       ct = enc.encrypt("hello", aad: "right")
       assert_raises(ChaCha20Blake3::DecryptionError) { dec.decrypt(ct, aad: "wrong") }
-      assert_equal 0, dec.message_index
+      assert_equal 0, dec.block_counter
     end
   end
 
   describe "#encrypt / #decrypt round-trip" do
     it "decrypts a single message" do
-      enc = ChaCha20Blake3::Stream.new(@key, @nonce)
-      dec = ChaCha20Blake3::Stream.new(@key, @nonce)
-      pt  = "Hello, Stream!"
+      enc, dec = make_pair
+      pt = "Hello, Session!"
       assert_equal pt.b, dec.decrypt(enc.encrypt(pt))
     end
 
     it "decrypts multiple messages in order" do
-      enc = ChaCha20Blake3::Stream.new(@key, @nonce)
-      dec = ChaCha20Blake3::Stream.new(@key, @nonce)
+      enc, dec = make_pair
       messages    = ["first", "second", "third", "fourth", "fifth"]
       ciphertexts = messages.map { |m| enc.encrypt(m) }
       decrypted   = ciphertexts.map { |ct| dec.decrypt(ct) }
@@ -394,13 +412,12 @@ describe ChaCha20Blake3::Stream do
     end
 
     it "returns BINARY encoding" do
-      s = ChaCha20Blake3::Stream.new(@key, @nonce)
+      s = ChaCha20Blake3::Session.new(@enc_key, @auth_key, @nonce)
       assert_equal Encoding::BINARY, s.encrypt("test").encoding
     end
 
     it "returns mutable ciphertext and plaintext" do
-      enc = ChaCha20Blake3::Stream.new(@key, @nonce)
-      dec = ChaCha20Blake3::Stream.new(@key, @nonce)
+      enc, dec = make_pair
       ct = enc.encrypt("test")
       pt = dec.decrypt(ct)
       refute_predicate ct, :frozen?
@@ -408,22 +425,20 @@ describe ChaCha20Blake3::Stream do
     end
 
     it "produces ciphertext of plaintext_len + TAG_SIZE" do
-      s  = ChaCha20Blake3::Stream.new(@key, @nonce)
+      s = ChaCha20Blake3::Session.new(@enc_key, @auth_key, @nonce)
       pt = "hello"
       assert_equal pt.bytesize + ChaCha20Blake3::TAG_SIZE, s.encrypt(pt).bytesize
     end
 
     it "handles empty message" do
-      enc = ChaCha20Blake3::Stream.new(@key, @nonce)
-      dec = ChaCha20Blake3::Stream.new(@key, @nonce)
+      enc, dec = make_pair
       assert_equal "".b, dec.decrypt(enc.encrypt(""))
     end
   end
 
   describe "AAD per message" do
     it "round-trips with per-message AAD" do
-      enc = ChaCha20Blake3::Stream.new(@key, @nonce)
-      dec = ChaCha20Blake3::Stream.new(@key, @nonce)
+      enc, dec = make_pair
       ct1 = enc.encrypt("msg1", aad: "ctx1")
       ct2 = enc.encrypt("msg2", aad: "ctx2")
       assert_equal "msg1".b, dec.decrypt(ct1, aad: "ctx1")
@@ -431,69 +446,57 @@ describe ChaCha20Blake3::Stream do
     end
 
     it "raises DecryptionError on wrong AAD" do
-      enc = ChaCha20Blake3::Stream.new(@key, @nonce)
-      dec = ChaCha20Blake3::Stream.new(@key, @nonce)
-      ct  = enc.encrypt("payload", aad: "correct")
+      enc, dec = make_pair
+      ct = enc.encrypt("payload", aad: "correct")
       assert_raises(ChaCha20Blake3::DecryptionError) { dec.decrypt(ct, aad: "wrong") }
     end
   end
 
-  describe "nonce isolation" do
+  describe "keystream isolation" do
     it "produces different ciphertexts for the same plaintext" do
-      s   = ChaCha20Blake3::Stream.new(@key, @nonce)
+      s = ChaCha20Blake3::Session.new(@enc_key, @auth_key, @nonce)
       ct1 = s.encrypt("repeat")
       ct2 = s.encrypt("repeat")
       refute_equal ct1, ct2
     end
   end
 
-  describe "order enforcement" do
-    it "raises DecryptionError when messages are out of order" do
-      enc = ChaCha20Blake3::Stream.new(@key, @nonce)
-      dec = ChaCha20Blake3::Stream.new(@key, @nonce)
+  describe "order dependence" do
+    it "produces wrong plaintext when messages are out of order" do
+      enc, dec = make_pair
       _ct1 = enc.encrypt("first")
       ct2  = enc.encrypt("second")
-      assert_raises(ChaCha20Blake3::DecryptionError) { dec.decrypt(ct2) }
-    end
-
-    it "does not advance counter on failed decrypt" do
-      enc = ChaCha20Blake3::Stream.new(@key, @nonce)
-      dec = ChaCha20Blake3::Stream.new(@key, @nonce)
-      ct1 = enc.encrypt("first")
-      ct2 = enc.encrypt("second")
-      assert_raises(ChaCha20Blake3::DecryptionError) { dec.decrypt(ct2) }
-      assert_equal "first".b, dec.decrypt(ct1)
+      # MAC doesn't bind the block counter, so out-of-order messages
+      # authenticate but decrypt to wrong plaintext.
+      pt = dec.decrypt(ct2)
+      refute_equal "second".b, pt
     end
   end
 
   describe "large message" do
     it "round-trips 64 MB" do
-      enc = ChaCha20Blake3::Stream.new(@key, @nonce)
-      dec = ChaCha20Blake3::Stream.new(@key, @nonce)
-      pt  = Random.bytes(64 * 1024 * 1024)
+      enc, dec = make_pair
+      pt = Random.bytes(64 * 1024 * 1024)
       assert_equal pt, dec.decrypt(enc.encrypt(pt))
     end
   end
 
   describe "integrity" do
     it "raises DecryptionError on bit flip" do
-      enc = ChaCha20Blake3::Stream.new(@key, @nonce)
-      dec = ChaCha20Blake3::Stream.new(@key, @nonce)
-      ct  = enc.encrypt("secret").dup
+      enc, dec = make_pair
+      ct = enc.encrypt("secret").dup
       ct.setbyte(0, ct.getbyte(0) ^ 0xFF)
       assert_raises(ChaCha20Blake3::DecryptionError) { dec.decrypt(ct) }
     end
 
     it "raises DecryptionError on truncated ciphertext" do
-      enc = ChaCha20Blake3::Stream.new(@key, @nonce)
-      dec = ChaCha20Blake3::Stream.new(@key, @nonce)
-      ct  = enc.encrypt("secret")
+      enc, dec = make_pair
+      ct = enc.encrypt("secret")
       assert_raises(ChaCha20Blake3::DecryptionError) { dec.decrypt(ct[0, ct.bytesize / 2]) }
     end
 
     it "does not allocate output string on failed MAC (DoS resistance)" do
-      enc = ChaCha20Blake3::Stream.new(@key, @nonce)
-      dec = ChaCha20Blake3::Stream.new(@key, @nonce)
+      enc, dec = make_pair
       size = 1_048_576
       ct = enc.encrypt(Random.bytes(size))
       tampered = ct.dup

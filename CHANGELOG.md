@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.3.0 — 2026-06-09
+
+### Changed
+
+- **Breaking:** `Stream` class replaced by `Session` class. `Session`
+  wraps the upstream chacha20-blake3 v0.10.0 `Session20` type: pre-derived
+  encryption and authentication keys with a continuous ChaCha20 block
+  counter, eliminating the per-message BLAKE3 KDF cost.
+  - `Session.new(enc_key, auth_key, nonce)` (3 args: 32-byte encryption
+    key, 32-byte authentication key, 8-byte nonce) replaces
+    `Stream.new(key, nonce)` (2 args: 32-byte key, 24-byte nonce).
+  - `#block_counter` replaces `#message_index`.
+- Upstream dependency changed from git rev to `chacha20-blake3 = "0.10.0"`
+  (crates.io).
+
+### Added
+
+- `SESSION_NONCE_SIZE` constant (8).
+
 ## 0.2.0 — 2026-04-07
 
 ### Added
